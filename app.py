@@ -1,207 +1,191 @@
-from fastapi import FastAPI, UploadFile, Form, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-import google.generativeai as genai
+from google import genai
 from pypdf import PdfReader
 from PIL import Image
 import io
 import re
 
-# ---------------------------
-# CONFIGURE GEMINI
-# ---------------------------
-genai.configure(api_key="YOUR_API_KEY_HERE")
-model = genai.GenerativeModel("gemini-2.0-flash")
 
-app = FastAPI()
+# =====================================================================
+# 1) CONFIGURE GEMINI 3 USING OFFICIAL FORMAT
+# =====================================================================
+client = genai.Client(api_key="")     # ← YOUR KEY
+MODEL = "gemini-3-flash-preview"                        # stable & fast
 
-# ---------------------------
-# CORS
-# ---------------------------
+
+# =====================================================================
+# 2) FASTAPI SETUP
+# =====================================================================
+app = FastAPI(title="AI Student Performance Analyzer")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------
-# SIMPLE PROFANITY FILTER
-# ---------------------------
-BAD_WORDS = ["badword1", "badword2", "fuck", "shit", "bitch"]
+
+# =====================================================================
+# 3) UTILS
+# =====================================================================
+BAD_WORDS = ["fuck", "shit", "bitch"]
 BAD_RE = re.compile("|".join(re.escape(w) for w in BAD_WORDS), re.IGNORECASE)
 
-def clean_text(text: str) -> str:
-    """Removes any harmful words from AI output."""
+def clean_text(text):
+    if not text:
+        return ""
     return BAD_RE.sub("****", text)
 
 
-# ---------------------------
-# LOAD IMAGE
-# ---------------------------
-def load_image(file):
-    img_bytes = file.file.read()
-    return Image.open(io.BytesIO(img_bytes))
-
-
-# ---------------------------
-# EXTRACT PDF
-# ---------------------------
 def extract_pdf(file):
     reader = PdfReader(file.file)
-    text = ""
-    for page in reader.pages:
-        t = page.extract_text() or ""
-        text += t + "\n"
-    return text
+    final = ""
+    for p in reader.pages:
+        final += (p.extract_text() or "") + "\n"
+    return final
 
 
-# ---------------------------
-# MARKSHEET ANALYZER ENDPOINT
-# ---------------------------
+def load_image(file):
+    data = file.file.read()
+    return Image.open(io.BytesIO(data))
+
+
+# =====================================================================
+# 4) MARKSHEET ANALYZER — MAIN LOGIC
+# =====================================================================
 @app.post("/analyze-marksheet")
-async def analyze_marksheet(image: UploadFile = Form(...)):
-    # decide file type
-    if image.filename.endswith(".pdf"):
-        text = extract_pdf(image)
-        img = None
+async def analyze_marksheet(image: UploadFile = File(...)):
+    if not image:
+        raise HTTPException(400, "Upload your marksheet.")
+
+    filename = image.filename.lower()
+
+    # Handle PDF
+    if filename.endswith(".pdf"):
+        extracted_text = extract_pdf(image)
+        parts = [{"text": get_mark_prompt(extracted_text)}]
+
+    # Handle Image
     else:
         img = load_image(image)
-        text = ""
+        parts = [
+            {"text": get_mark_prompt("")},
+            img
+        ]
 
-    prompt = f"""
-You are an AI Student Performance Analyzer.
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=parts
+    )
 
-If marks are low, return JSON with:
-- Weak skills
-- Why marks might be low
-- Advice for student
-- Parental guidance including:
-  • avoid phone/gadgets
-  • consequences of parents blaming children
-  • how parents can support positively
-  • discipline building
-- Motivational message
-- Ask student: "Tell me honestly, why do you struggle to concentrate?"
-
-If marks are average/high:
-- strengths
-- improvement tips
-- study plan
-
-STRICT JSON ONLY:
-
-{{
-  "detected_subjects": [],
-  "marks_extracted": {{}},
-  "strengths": [],
-  "weaknesses": [],
-  "study_plan": [],
-  "suggested_courses": [],
-  "parental_guidance": "",
-  "student_guidance": "",
-  "motivation": "",
-  "follow_up_question": "Tell me honestly, why do you struggle to concentrate?"
-}}
-
-ANALYZE TEXT BELOW:
-{text}
-"""
-
-    response = model.generate_content([prompt] if img is None else [prompt, img])
-    cleaned = clean_text(response.text)
+    cleaned = clean_text(getattr(response, "text", ""))
     return {"result": cleaned}
 
 
-# ---------------------------
-# STUDENT FOLLOW-UP ENDPOINT
-# ---------------------------
-@app.post("/student-response")
-async def student_response(request: Request):
+# =====================================================================
+# 5) MARKSHEET ANALYSIS PROMPT — PURE JSON
+# =====================================================================
+def get_mark_prompt(text):
+    return f"""
+You are an expert student performance analyzer.
+
+Extract subjects and marks, identify LOW MARKS subjects,
+and explain WHY the student might be weak in those subjects.
+
+Then give:
+- Friendly Tanglish advice like a senior/machi
+- Local slang (da, dei — but polite & friendly)
+- Use decent language and keep them in stable mindset
+- Don't use demotivating language and advice
+- Strong motivation
+- Proper JSON only
+
+STRICT JSON FORMAT:
+
+{{
+  "subjects_detected": [],
+  "marks": {{}},
+  "low_mark_subjects": [],
+  "reasons": [],
+  "tanglish_advice": [],
+  "study_plan": [],
+  "motivation": "string"
+}}
+
+Analyze this marksheet text:
+{text}
+"""
+
+
+# =====================================================================
+# 6) FOLLOW-UP — ASK STUDENT REASON
+# =====================================================================
+@app.post("/student-reason")
+async def student_reason(request: Request):
     data = await request.json()
-    complaint = data.get("complaint", "")
+    reason = data.get("reason", "")
 
-    followup_prompt = f"""
-The student said about concentration: "{complaint}"
+    prompt = f"""
+The student says: "{reason}"
 
-Give:
-- What mistake the student is doing
-- How to fix their focus
+Give friendly Tanglish feedback:
+- what mistake they are doing
+- how to fix it
 - 5 simple habits
-- Emotional support
-- Motivation to be a better human being
+- motivational line
 
-STRICT JSON ONLY:
+STRICT JSON:
 
 {{
   "analysis": "",
-  "advice": "",
-  "habits": [""],
+  "fix": "",
+  "habits": [],
   "motivation": ""
 }}
 """
 
-    reply = model.generate_content(followup_prompt)
-    cleaned = clean_text(reply.text)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=[{"text": prompt}]
+    )
+
+    cleaned = clean_text(response.text)
     return {"result": cleaned}
 
 
-# ---------------------------
-# FRIENDLY CHATBOT (POPUP)
-# ---------------------------
+# =====================================================================
+# 7) CHATBOT — FRIENDLY AI
+# =====================================================================
 @app.post("/chatbot")
 async def chatbot(request: Request):
     data = await request.json()
     msg = (data.get("message") or "").strip()
 
-    # If first time, send opening line
     if msg == "":
-        return {
-            "reply": "Hi da💛, Eppdi irukka?"
-        }
+        return {"reply": "Hi da 💛 eppdi irukka?"}
 
-    chatbot_prompt = f"""
-You are a friendly Chennai-local Tamil/Tanglish chatbot.
-You speak in Tanglish (Tamil words typed in English letters).
-You must ALWAYS be:
-- caring
-- polite and not too much 
-- no bad words EVER
-- supportive
-- short replies (2–5 lines)
-- cute emojis (💛💙✨)
-- ask questions back to keep convo going for consoling the student
-- dont be too formal, be casual and friendly 
-- use local slang
-- light humor and fun
-- little teasing is okay but keep it kind
-- comforting
-- understanding
-- be like a close friend
-- get them to open up more
-- be little rude sometimes but in a funny way
-- dont talk too much and dont give long replies, keep it short and sweet
-- advise only when asked
-- mainly advise parents, not the student if the parents are involved and pressuring the student too much
-- if the student was so lethargic, be rude to them a bit to wake them up but keep it kind
+    prompt = f"""
+You are a friendly Tanglish Tamil AI friend.
+Talk like: casual, cute emojis, local slang, caring, helpful.
+Keep the conversation short.
 
-Rules:
-- Never insult.
-- No adult content.
-- No negativity.
-- No overly formal language.
-- No Shakespearean English.
-- No Degrade anyone.
-- No overly technical words.
-- No formal English.
-- Use local soft slang like "da", "dei", "macha", "sollu da", "seri", "parava illa" BUT keep it kind.
-- NO harmful words (strict).
-
-User said: "{msg}"
-
-Now reply in sweet, kind Tanglish.
+User: {msg}
 """
 
-    response = model.generate_content(chatbot_prompt)
+    response = client.models.generate_content(
+        model=MODEL,
+        contents=[{"text": prompt}]
+    )
+
     cleaned = clean_text(response.text)
     return {"reply": cleaned}
+
+
+# =====================================================================
+# 8) RUN UVICORN
+# =====================================================================
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
