@@ -1,177 +1,206 @@
-/* eslint-disable react-hooks/exhaustive-deps */
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 
-function App() {
-  const [image, setImage] = useState(null);
-  const [step, setStep] = useState("upload");
+// --------------------------------------------------------------
+// JSON → Beautiful Formatted UI Component
+// --------------------------------------------------------------
+const RenderJSON = ({ data }) => {
+  if (!data || typeof data !== "object") return null;
+
+  return (
+    <div className="space-y-6 mt-5">
+
+      {/* Subjects */}
+      {data.subjects_detected && (
+        <div className="bg-white shadow p-5 rounded-xl border">
+          <h3 className="font-bold text-xl text-blue-700 mb-3">📚 Subjects Detected</h3>
+          <div className="flex flex-wrap gap-2">
+            {data.subjects_detected.map((s, i) => (
+              <span
+                key={i}
+                className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm"
+              >
+                {s}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Analysis */}
+      {data.analysis && (
+        <div className="bg-white shadow p-5 rounded-xl border">
+          <h3 className="font-bold text-xl text-purple-700 mb-2">🧠 Analysis</h3>
+          <p className="text-gray-700 leading-relaxed">{data.analysis}</p>
+        </div>
+      )}
+
+      {/* Fix */}
+      {data.fix && (
+        <div className="bg-white shadow p-5 rounded-xl border">
+          <h3 className="font-bold text-xl text-red-700 mb-2">🔧 Fix / Explanation</h3>
+          <p className="text-gray-700 leading-relaxed">{data.fix}</p>
+        </div>
+      )}
+
+      {/* Habits */}
+      {data.habits && data.habits.length > 0 && (
+        <div className="bg-white shadow p-5 rounded-xl border">
+          <h3 className="font-bold text-xl text-green-700 mb-2">🌿 Suggested Habits</h3>
+          <ul className="list-disc ml-5 space-y-2">
+            {data.habits.map((h, i) => (
+              <li key={i} className="text-gray-700">{h}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Motivation */}
+      {data.motivation && (
+        <div className="bg-white shadow p-5 rounded-xl border">
+          <h3 className="font-bold text-xl text-yellow-600 mb-2">✨ Motivation</h3>
+          <p className="text-gray-700">{data.motivation}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+// --------------------------------------------------------------
+// MAIN APP COMPONENT
+// --------------------------------------------------------------
+export default function App() {
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
-  const [studentAnswer, setStudentAnswer] = useState("");
+  const [step, setStep] = useState("upload");
+
+  const [reason, setReason] = useState("");
   const [finalAdvice, setFinalAdvice] = useState(null);
 
-  const [chatMessages, setChatMessages] = useState([]);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState([]);
 
-  const [loading, setLoading] = useState(false);
-  const [chatLoading, setChatLoading] = useState(false);
-
-  // Extract JSON safely
-  function extractJSON(text) {
-    const match = text.match(/\{[\s\S]*\}/);
-    return match ? match[0] : null;
-  }
-
-  // ⭐ GLOBAL ENTER KEY HANDLER
-  useEffect(() => {
-    const handler = (e) => {
-      if (e.key === "Enter") {
-        // Shift+Enter → Do nothing (new line)
-        if (e.shiftKey) return;
-
-        e.preventDefault();
-
-        if (chatOpen) {
-          sendChatMessage();
-        } else if (step === "upload" && !loading) {
-          uploadMarksheet();
-        } else if (step === "ask-student" && !loading) {
-          sendStudentAnswer();
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [chatOpen, chatInput, step, studentAnswer, image, loading]);
-
-  // Upload marksheet → AI analysis
-  const uploadMarksheet = async () => {
-    if (!image) {
-      alert("Please upload your marksheet!");
-      return;
+  // Extract JSON from AI messy text
+  const extract = (text) => {
+    try {
+      const m = text.match(/\{[\s\S]*\}/);
+      return m ? m[0] : "{}";
+    } catch {
+      return "{}";
     }
+  };
+
+  // -------------------------
+  // Upload & Analyze Marksheet
+  // -------------------------
+  const analyzeMarks = async () => {
+    if (!file) return alert("Upload a file!");
 
     setLoading(true);
 
     const form = new FormData();
-    form.append("image", image);
+    form.append("image", file);
 
     const res = await fetch("http://127.0.0.1:8000/analyze-marksheet", {
       method: "POST",
       body: form,
     });
 
-    const json = await res.json();
-    const clean = extractJSON(json.result);
-    setResult(JSON.parse(clean));
+    const data = await res.json();
+    const pure = extract(data.result);
+    setResult(JSON.parse(pure));
 
+    setStep("result");
     setLoading(false);
-    setStep("ask-student");
   };
 
-  // Student concentration complaint → AI reply
-  const sendStudentAnswer = async () => {
-    if (!studentAnswer.trim()) return;
+  // -------------------------
+  // Student Reason → Advice
+  // -------------------------
+  const analyzeReason = async () => {
+    if (!reason.trim()) return alert("Type your reason!");
 
     setLoading(true);
 
-    const res = await fetch("http://127.0.0.1:8000/student-response", {
+    const res = await fetch("http://127.0.0.1:8000/student-reason", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ complaint: studentAnswer }),
+      body: JSON.stringify({ reason }),
     });
 
-    const json = await res.json();
-    const clean = extractJSON(json.result);
-    setFinalAdvice(JSON.parse(clean));
+    const data = await res.json();
+    const pure = extract(data.result);
+    setFinalAdvice(JSON.parse(pure));
 
+    setStep("advice");
     setLoading(false);
-    setStep("final");
   };
 
-  // Open chatbot popup + load first message
-  const openChat = () => {
-    setChatOpen(true);
-    if (chatMessages.length === 0) {
-      setChatMessages([
-        { sender: "ai", text: "Hi da💛, Eppdi irukka?" },
-      ]);
-    }
-  };
-
-  // Send chat message
-  const sendChatMessage = async () => {
+  // -------------------------
+  // Chatbot
+  // -------------------------
+  const sendChat = async () => {
     if (!chatInput.trim()) return;
 
-    const userMsg = { sender: "you", text: chatInput };
-    setChatMessages((prev) => [...prev, userMsg]);
-    setChatInput("");
-    setChatLoading(true); // ⭐ show typing
+    setChatMessages((p) => [...p, { me: true, text: chatInput }]);
 
     const res = await fetch("http://127.0.0.1:8000/chatbot", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: userMsg.text }),
+      body: JSON.stringify({ message: chatInput }),
     });
 
     const data = await res.json();
-    const aiMsg = { sender: "ai", text: data.reply };
-
-    setChatMessages((prev) => [...prev, aiMsg]);
-    setChatLoading(false); // stop typing
+    setChatMessages((p) => [...p, { me: false, text: data.reply }]);
+    setChatInput("");
   };
 
+  // --------------------------------------------------------------
+  // UI
+  // --------------------------------------------------------------
   return (
-    <div className="min-h-screen bg-[#DFF3FF] p-8 flex justify-center items-center">
+    <div className="min-h-screen bg-linear-to-br from-[#d9eafd] to-[#fefefe] p-8 flex items-center justify-center">
 
-      {/* CHATBOT POPUP */}
+      {/* Floating Chat Button */}
+      <button
+        onClick={() => setChatOpen(true)}
+        className="fixed top-6 right-6 bg-yellow-400 px-5 py-3 rounded-full shadow-md font-semibold"
+      >
+        💬 Chat With AI Friend
+      </button>
+
+      {/* Chat Popup */}
       {chatOpen && (
         <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
-          <div className="bg-white w-110 p-5 rounded-2xl shadow-lg border border-gray-300">
-
-            {/* HEADER */}
-            <div className="flex justify-between items-center mb-3">
-              <h2 className="text-xl font-bold text-yellow-600">💬 AI Friend</h2>
-              <button onClick={() => setChatOpen(false)} className="text-red-500 text-lg font-bold">
-                ✖
-              </button>
+          <div className="bg-white rounded-2xl w-96 p-5 shadow-xl">
+            <div className="flex justify-between mb-4">
+              <h2 className="font-bold text-blue-600 text-lg">💛 AI Friend</h2>
+              <button onClick={() => setChatOpen(false)}>❌</button>
             </div>
 
-            {/* MESSAGES */}
-            <div className="h-110 overflow-y-auto bg-[#FFFCE2] p-3 rounded-xl border border-gray-300 space-y-3">
-              {chatMessages.map((msg, i) => (
-                <div key={i} className={msg.sender === "you" ? "text-right" : "text-left"}>
-                  <span className={msg.sender === "you"
-                    ? "inline-block bg-blue-200 px-3 py-2 rounded-xl"
-                    : "inline-block bg-yellow-200 px-3 py-2 rounded-xl"}
+            <div className="h-72 overflow-y-auto bg-gray-100 p-3 rounded-xl">
+              {chatMessages.map((m, i) => (
+                <p key={i} className={`my-2 ${m.me ? "text-right" : "text-left"}`}>
+                  <span
+                    className={`px-3 py-2 rounded-xl inline-block ${
+                      m.me ? "bg-blue-300" : "bg-yellow-300"
+                    }`}
                   >
-                    {msg.text}
+                    {m.text}
                   </span>
-                </div>
+                </p>
               ))}
-
-              {/* ⭐ CHATBOT TYPING INDICATOR */}
-              {chatLoading && (
-                <div className="text-left">
-                  <span className="inline-block bg-yellow-100 px-3 py-2 rounded-xl text-sm">
-                    typing…
-                  </span>
-                </div>
-              )}
             </div>
 
-            {/* INPUT */}
-            <div className="mt-3 flex gap-2">
+            <div className="flex gap-2 mt-4">
               <input
+                className="grow p-2 border rounded-xl"
+                placeholder="Type..."
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                className="grow p-2 border border-yellow-400 rounded-xl"
-                placeholder="Type here sweetie..."
               />
-              <button
-                onClick={sendChatMessage}
-                className="bg-yellow-400 px-4 py-2 rounded-xl font-bold hover:bg-yellow-500"
-              >
+              <button className="bg-blue-500 px-4 text-white rounded-xl" onClick={sendChat}>
                 ➤
               </button>
             </div>
@@ -179,122 +208,65 @@ function App() {
         </div>
       )}
 
-      {/* MAIN CARD */}
-      <div className="max-w-3xl w-full bg-white shadow-xl rounded-3xl p-8 border border-gray-200">
+      {/* Main Card */}
+      <div className="w-full max-w-3xl p-10 bg-white/70 backdrop-blur-lg rounded-3xl shadow-xl border border-white">
 
-        {/* CHAT BUTTON */}
-        <div className="flex justify-end mb-3">
-          <button
-            onClick={openChat}
-            className="px-5 py-2 bg-yellow-300 hover:bg-yellow-400 text-gray-800 rounded-xl shadow-md font-semibold transition"
-          >
-            💬 Chat with AI Friend
-          </button>
-        </div>
-
-        {/* STEP 1 — UPLOAD */}
+        {/* Step 1: Upload */}
         {step === "upload" && (
-          <>
-            <h1 className="text-4xl font-bold text-blue-700 text-center mb-4">
-              📘 Student Performance Analyzer
+          <div>
+            <h1 className="text-4xl font-extrabold text-blue-700 text-center mb-8">
+              📘 AI Student assistant
             </h1>
 
-            <p className="text-gray-700 text-center mb-6 text-lg">
-              Upload your marksheet 
-            </p>
-
-            <input
-              type="file"
-              accept="image/*,.pdf"
-              className="w-full p-3 bg-blue-50 rounded-xl border border-blue-300 mb-6"
-              onChange={(e) => setImage(e.target.files[0])}
-            />
+            <div className="border border-blue-300 p-4 rounded-xl bg-blue-50">
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(e) => setFile(e.target.files[0])}
+              />
+            </div>
 
             <button
-              onClick={uploadMarksheet}
-              className="w-full py-3 bg-yellow-300 hover:bg-yellow-400 font-semibold rounded-xl shadow"
+              onClick={analyzeMarks}
+              className="mt-6 w-full bg-yellow-400 hover:bg-yellow-500 p-4 rounded-xl text-lg font-bold shadow-md"
             >
               {loading ? "Analyzing..." : "Analyze Marksheet"}
             </button>
-          </>
+          </div>
         )}
 
-        {/* STEP 2 — ASK STUDENT  */}
-        {step === "ask-student" && (
-          <>
-            <h2 className="text-3xl font-bold text-blue-700 mb-4 text-center">
-              🌟 Your Performance Summary
-            </h2>
+        {/* Step 2: Result */}
+        {step === "result" && (
+          <div>
+            <h2 className="text-3xl font-bold text-blue-700 mb-4">📄 Analysis Result</h2>
 
-            <div className="bg-blue-50 p-6 rounded-xl border border-blue-300">
-              <h3 className="font-bold text-green-700 text-xl">✔ Strong Subjects</h3>
-              <ul className="list-disc ml-6 mt-2 text-gray-800 space-y-1">
-                {result.strengths.length > 0
-                  ? result.strengths.map((s, i) => <li key={i}>{s}</li>)
-                  : <p>No strong subjects yet sweetie 💙</p>}
-              </ul>
-
-              <h3 className="font-bold text-red-600 mt-6 text-xl">⚠ Weak Areas</h3>
-              <ul className="list-disc ml-6 mt-2 text-gray-800">
-                {result.weaknesses.map((w, i) => <li key={i}>{w}</li>)}
-              </ul>
-
-              <h3 className="font-bold text-blue-600 mt-6 text-xl">📘 Study Plan</h3>
-              <ul className="list-disc ml-6 mt-2 text-gray-800">
-                {result.study_plan.map((p, i) => <li key={i}>{p}</li>)}
-              </ul>
-            </div>
-
-            <h3 className="text-lg font-semibold text-blue-700 mt-4">
-              💭 What is distracting you?
-            </h3>
+            <RenderJSON data={result} />
 
             <textarea
-              className="w-full p-4 rounded-xl bg-yellow-50 border border-yellow-400 mt-2 resize-none"
-              placeholder="Tell me what your distractions are..."
-              rows={4}
-              onChange={(e) => setStudentAnswer(e.target.value)}
+              className="mt-6 w-full p-4 border rounded-xl"
+              placeholder="Why do you think you're not focusing?"
+              onChange={(e) => setReason(e.target.value)}
             />
 
             <button
-              onClick={sendStudentAnswer}
-              className="w-full py-3 mt-4 bg-yellow-300 hover:bg-yellow-400 font-semibold rounded-xl"
+              onClick={analyzeReason}
+              className="mt-4 w-full bg-yellow-400 p-4 rounded-xl text-lg font-bold"
             >
-              {loading ? "Submitting..." : "Submit"}
+              Continue →
             </button>
-          </>
+          </div>
         )}
 
-        {/* STEP 3 — FINAL GUIDANCE */}
-        {step === "final" && (
-          <>
-            <h2 className="text-3xl font-bold text-green-700 text-center mb-6">
-              🌼 Personalized Guidance
-            </h2>
+        {/* Step 3: Final Advice */}
+        {step === "advice" && (
+          <div>
+            <h2 className="text-3xl font-bold text-green-600 mb-4">🌟 Personalized Guidance</h2>
 
-            <div className="bg-yellow-50 p-6 rounded-xl border border-yellow-400">
-              <h3 className="text-blue-700 font-bold text-xl">🧠 Understanding You</h3>
-              <p className="text-gray-800 mt-2 whitespace-pre-line">{finalAdvice.analysis}</p>
-
-              <h3 className="text-red-600 font-bold text-xl mt-5">💡 Advice</h3>
-              <p className="text-gray-800 whitespace-pre-line">{finalAdvice.advice}</p>
-
-              <h3 className="text-blue-600 font-bold text-xl mt-5">✔ Good Habits</h3>
-              <ul className="ml-6 mt-2 space-y-1 text-gray-800">
-                {finalAdvice.habits?.map((h, i) => <li key={i}> {h}</li>)}
-              </ul>
-
-              <h3 className="text-green-700 font-bold text-xl mt-5">🌈 Motivation</h3>
-              <p className="text-gray-900 font-semibold whitespace-pre-line">
-                {finalAdvice.motivation}
-              </p>
-            </div>
-          </>
+            <RenderJSON data={finalAdvice} />
+          </div>
         )}
 
       </div>
     </div>
   );
 }
-
-export default App;
